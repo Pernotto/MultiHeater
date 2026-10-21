@@ -1,0 +1,81 @@
+# Production firmware: multi_heater drives the elements. Raw PWM is NOT exposed.
+esphome:
+  name: boiler
+
+esp32:
+  board: esp32dev
+
+logger:
+api:
+ota:
+  - platform: esphome
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [multi_heater]
+  # or: - source: github://Pernotto/MultiHeater
+
+one_wire:
+  - platform: gpio
+    pin: GPIO4
+
+sensor:
+  - platform: dallas_temp
+    id: water_temp
+    name: "Water temperature"
+    address: 0x1111111111111111
+    update_interval: 2s
+  - platform: dallas_temp
+    id: el1_temp
+    name: "Element 1 temperature"
+    address: 0x2222222222222222
+    update_interval: 2s
+  - platform: dallas_temp
+    id: el2_temp
+    name: "Element 2 temperature"
+    address: 0x3333333333333333
+    update_interval: 2s
+
+output:
+  - platform: slow_pwm
+    id: el1_pwm
+    pin: GPIO25
+    period: 5s
+  - platform: slow_pwm
+    id: el2_pwm
+    pin: GPIO26
+    period: 5s
+
+climate:
+  - platform: multi_heater
+    id: boiler
+    name: "Boiler"
+    sensor: water_temp
+    water_mass: 45000         # grams, fixed value / fallback
+    # water_mass_sensor: scale_grams   # optional: live mass from a sensor, in grams
+    loss_coefficient: 2.3     # W/K    (multiheater CLI)
+    ambient_temperature: 20   # or ambient_sensor: <id>
+    approach_time: 300s
+    max_power: 3000           # optional total budget, W
+    elements:
+      - output: el1_pwm
+        temperature_sensor: el1_temp
+        max_delta: 50         # element may be 50 °C above the water
+        max_temperature: 150  # optional absolute ceiling
+        power: 1850           # W      (multiheater CLI)
+        conductance: 38       # W/K    (multiheater CLI)
+        heat_capacity: 1900   # J/K    (multiheater CLI)
+        enable_switch:
+          name: "Element 1 enabled"
+      - output: el2_pwm
+        temperature_sensor: el2_temp
+        max_delta: 50
+        power: 920
+        conductance: 20
+        heat_capacity: 900
+        enabled: true

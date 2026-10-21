@@ -1,0 +1,24 @@
+[project]
+name = "multiheater-cli"
+version = "0.1.0"
+description = "Calibration tool for the MultiHeater ESPHome climate"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "questionary>=2.0",
+    "requests>=2.31",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+multiheater = "multiheater_cli.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["multiheater_cli"]

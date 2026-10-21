@@ -1,0 +1,123 @@
+# Calibration firmware: no multi_heater. Each element's PWM is exposed as a 0-100 % number
+# that the `multiheater` CLI drives through Home Assistant.
+# Flash example.yaml again once the parameters are known.
+substitutions:
+  # Calibration runs without element limits (it is only water). These absolute cuts stay as a
+  # backstop against a dry or faulty element; set them far above normal operation.
+  el1_cut_abs: "155"     # degC
+  el2_cut_abs: "155"
+
+esphome:
+  name: boiler
+  on_boot:
+    priority: 600
+    then:
+      - number.set: {id: el1_duty, value: 0}
+      - number.set: {id: el2_duty, value: 0}
+
+esp32:
+  board: esp32dev
+
+logger:
+ota:
+  - platform: esphome
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  # Safety net: no API client left (Home Assistant / the CLI went away) -> everything off.
+  # The condition keeps a closing log viewer from stopping a running test.
+  on_client_disconnected:
+    - if:
+        condition:
+          not:
+            api.connected:
+        then:
+          - number.set: {id: el1_duty, value: 0}
+          - number.set: {id: el2_duty, value: 0}
+
+one_wire:
+  - platform: gpio
+    pin: GPIO4
+
+sensor:
+  - platform: dallas_temp
+    id: water_temp
+    name: "Water temperature"
+    address: 0x1111111111111111
+    update_interval: 2s
+  - platform: dallas_temp
+    id: el1_temp
+    name: "Element 1 temperature"
+    address: 0x2222222222222222
+    update_interval: 500ms
+    on_value:
+      # Hard cut: sensor lost, or element 1 above its absolute cut
+      - if:
+          condition:
+            lambda: return (isnan(x) || x >= ${el1_cut_abs}) && id(el1_duty).state > 0;
+          then:
+            - number.set: {id: el1_duty, value: 0}
+  - platform: dallas_temp
+    id: el2_temp
+    name: "Element 2 temperature"
+    address: 0x3333333333333333
+    update_interval: 500ms
+    on_value:
+      # Hard cut: sensor lost, or element 2 above its absolute cut
+      - if:
+          condition:
+            lambda: return (isnan(x) || x >= ${el2_cut_abs}) && id(el2_duty).state > 0;
+          then:
+            - number.set: {id: el2_duty, value: 0}
+
+output:
+  - platform: slow_pwm
+    id: el1_pwm
+    pin: GPIO25
+    period: 5s
+  - platform: slow_pwm
+    id: el2_pwm
+    pin: GPIO26
+    period: 5s
+
+number:
+  - platform: template
+    id: el1_duty
+    name: "Element 1 duty"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    optimistic: true
+    initial_value: 0
+    restore_value: false
+    set_action:
+      - output.set_level:
+          id: el1_pwm
+          # Refuses to turn on while its sensor is missing or the element is past its absolute cut
+          level: !lambda |-
+            float t = id(el1_temp).state;
+            if (std::isnan(t) || t >= ${el1_cut_abs})
+              return 0.0f;
+            return x / 100.0f;
+  - platform: template
+    id: el2_duty
+    name: "Element 2 duty"
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    optimistic: true
+    initial_value: 0
+    restore_value: false
+    set_action:
+      - output.set_level:
+          id: el2_pwm
+          # Refuses to turn on while its sensor is missing or the element is past its absolute cut
+          level: !lambda |-
+            float t = id(el2_temp).state;
+            if (std::isnan(t) || t >= ${el2_cut_abs})
+              return 0.0f;
+            return x / 100.0f;

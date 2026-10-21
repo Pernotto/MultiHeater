@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.esphome/
+secrets.yaml
+# calibration runs contain your own measurements and entity names
+results/

@@ -1,0 +1,110 @@
+# Desktop simulation of the controller: `esphome run example_host.yaml`.
+# A lambda integrates the two-node thermal model. The plant is scaled down (2 kg of water,
+# small elements) so a full heat-up takes a few minutes instead of hours.
+esphome:
+  name: multiheater-sim
+  on_boot:
+    priority: -100
+    then:
+      # The enable switch restores its last state; a previous run of this scenario left it off.
+      - switch.turn_on: el1_enabled
+      - climate.control:
+          id: boiler
+          mode: HEAT
+          target_temperature: 60
+      - delay: 240s
+      - logger.log: "SCENARIO: disabling element 1, target 70"
+      - switch.turn_off: el1_enabled
+      - climate.control:
+          id: boiler
+          target_temperature: 70
+
+host:
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [multi_heater]
+
+globals:
+  - {id: tw, type: float, initial_value: "20.0"}
+  - {id: tel1, type: float, initial_value: "20.0"}
+  - {id: tel2, type: float, initial_value: "20.0"}
+  - {id: d1, type: float, initial_value: "0.0"}
+  - {id: d2, type: float, initial_value: "0.0"}
+  - {id: tw_peak, type: float, initial_value: "0.0"}
+
+output:
+  - platform: template
+    id: el1_pwm
+    type: float
+    write_action:
+      - lambda: id(d1) = state;
+  - platform: template
+    id: el2_pwm
+    type: float
+    write_action:
+      - lambda: id(d2) = state;
+
+sensor:
+  - {platform: template, id: water_temp, name: "Water", update_interval: never}
+  - {platform: template, id: el1_temp, name: "Element 1", update_interval: never}
+  - {platform: template, id: el2_temp, name: "Element 2", update_interval: never}
+  - {platform: template, id: water_mass_g, name: "Water mass", unit_of_measurement: g, update_interval: never}
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          // Plant: element1 P=2000 h=40 C=150, element2 P=1000 h=25 C=80, k=3, 2 kg water.
+          const float mc = 2.0f * 4186.0f;
+          for (int s = 0; s < 20; s++) {
+            const float dt = 0.05f;
+            const float q1 = 40.0f * (id(tel1) - id(tw));
+            const float q2 = 25.0f * (id(tel2) - id(tw));
+            id(tel1) += dt * (id(d1) * 2000.0f - q1) / 150.0f;
+            id(tel2) += dt * (id(d2) * 1000.0f - q2) / 80.0f;
+            id(tw) += dt * (q1 + q2 - 3.0f * (id(tw) - 20.0f)) / mc;
+          }
+          auto q = [](float v) { return roundf(v * 16.0f) / 16.0f; };  // DS18B20 resolution
+          id(water_temp).publish_state(q(id(tw)));
+          id(el1_temp).publish_state(q(id(tel1)));
+          id(el2_temp).publish_state(q(id(tel2)));
+          id(water_mass_g).publish_state(2000.0f);
+          id(tw_peak) = std::max(id(tw_peak), id(tw));
+  - interval: 10s
+    then:
+      - lambda: |-
+          ESP_LOGI("sim", "SIM t=%.0fs T_w=%.2f (peak %.2f) T_el1=%.1f T_el2=%.1f d1=%.0f%% d2=%.0f%% P=%.0fW",
+                   millis() / 1000.0f, id(tw), id(tw_peak), id(tel1), id(tel2), id(d1) * 100, id(d2) * 100,
+                   id(boiler).get_commanded_power());
+
+climate:
+  - platform: multi_heater
+    id: boiler
+    name: "Boiler"
+    sensor: water_temp
+    water_mass_sensor: water_mass_g   # grams, e.g. from a load cell
+    loss_coefficient: 3
+    ambient_temperature: 20
+    approach_time: 30s
+    elements:
+      - output: el1_pwm
+        temperature_sensor: el1_temp
+        max_delta: 40
+        power: 2000
+        conductance: 40
+        heat_capacity: 150
+        enable_switch:
+          id: el1_enabled
+          name: "Element 1 enabled"
+      - output: el2_pwm
+        temperature_sensor: el2_temp
+        max_delta: 35
+        power: 1000
+        conductance: 25
+        heat_capacity: 80
